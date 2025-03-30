@@ -59,7 +59,7 @@ def display_result(formatted, ext):
 
 def main():
     st.set_page_config(page_title="Markdown AI 요약기", layout="wide")
-    tab1, tab2 = st.tabs(["🧠 요약기 사용하기", "🔗 API 테스트"])
+    tab1, tab2, tab3 = st.tabs(["🧠 요약기 사용하기", "🔗 API 테스트", "🧪 IntelliJ 테스트"])
 
     with tab1:
         st.title("🧠 Markdown 요약기 - Streamlit 앱")
@@ -127,6 +127,41 @@ def main():
                 st.json(st.session_state["api_result"])
             else:
                 st.code(json.dumps(st.session_state["api_result"], indent=2, ensure_ascii=False), language="json")
+
+    with tab3:
+        st.title("🧪 IntelliJ 테스트")
+
+        st.write("📂 Spring 서버에서 사용할 Markdown 파일을 선택하거나 경로를 직접 입력하세요.")
+        uploaded_spring_file = st.file_uploader("🔍 Finder에서 파일 선택 (선택사항)", type=["md"], key="spring_file")
+
+        spring_file_path = st.text_input("또는 직접 경로 입력", value="", key="spring_path")
+
+        final_spring_path = ""
+        if uploaded_spring_file:
+            temp_spring_path = os.path.join("temp", uploaded_spring_file.name)
+            os.makedirs("temp", exist_ok=True)
+            with open(temp_spring_path, "wb") as f:
+                f.write(uploaded_spring_file.read())
+            final_spring_path = temp_spring_path
+            st.info(f"📁 선택된 파일 경로: {final_spring_path}")
+        else:
+            final_spring_path = spring_file_path
+
+        if st.button("🚀 Spring API 호출"):
+            if final_spring_path:
+                with st.spinner("Spring 서버에 요청 중..."):
+                    try:
+                        response = requests.get("http://localhost:8080/api/summary", params={"filePath": final_spring_path})
+                        if response.status_code == 200:
+                            spring_result = response.json()
+                            st.success("✅ Spring 서버 요약 완료!")
+                            st.json(spring_result)
+                        else:
+                            st.error(f"❌ 오류 발생: {response.status_code} - {response.text}")
+                    except Exception as e:
+                        st.error(f"❌ 예외 발생: {str(e)}")
+            else:
+                st.warning("파일 경로를 입력해주세요.")
 
 
 if __name__ == "__main__":
