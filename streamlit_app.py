@@ -2,6 +2,10 @@ import streamlit as st
 import os
 import json
 import requests
+import subprocess
+from kafka import KafkaConsumer, KafkaProducer
+import threading
+import time
 
 from loaders.md_loader import load_markdown
 from splitters.token_splitter import split_documents
@@ -21,7 +25,7 @@ def process_uploaded_file(uploaded_file, mode_key, lang_key, formatter):
     split_docs = split_documents(docs)
 
     if formatter.get_extension() == "json":
-        from chains.summarize_and_translate_chain import get_summary_and_translate_chain
+        # from chains.summarize_and_translate_chain import get_summary_and_translate_chain
 
         summarize_chain = get_summary_and_translate_chain(mode="detailed", lang="ko")
         raw_summary = summarize_chain.invoke(split_docs)
@@ -59,7 +63,7 @@ def display_result(formatted, ext):
 
 def main():
     st.set_page_config(page_title="Markdown AI 요약기", layout="wide")
-    tab1, tab2, tab3 = st.tabs(["🧠 요약기 사용하기", "🔗 API 테스트", "🧪 IntelliJ 테스트"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🧠 요약기 사용하기", "🔗 API 테스트", "🧪 IntelliJ 테스트", "📡 Kafka 통신 테스트", "📤 Kafka 요청 전송", "🛰 Kafka Consumer 실행"])
 
     with tab1:
         st.title("🧠 Markdown 요약기 - Streamlit 앱")
@@ -157,11 +161,103 @@ def main():
                             st.success("✅ Spring 서버 요약 완료!")
                             st.json(spring_result)
                         else:
-                            st.error(f"❌ 오류 발생: {response.status_code} - {response.text}")
+                            st.error(f"❌ 오류 발생: {response.status_code}  - {response.text}")
                     except Exception as e:
                         st.error(f"❌ 예외 발생: {str(e)}")
             else:
                 st.warning("파일 경로를 입력해주세요.")
+
+    with tab4:
+        st.title("📡 Kafka 통신 테스트")
+
+        kafka_status = st.empty()
+        kafka_result_box = st.empty()
+
+        if "kafka_result" not in st.session_state:
+            st.session_state["kafka_result"] = []
+
+        def run_kafka_consumer():
+            consumer = KafkaConsumer(
+                'md-file-requests',
+                bootstrap_servers='localhost:9092',
+                group_id='summarizer-group',
+                auto_offset_reset='earliest',
+                value_deserializer=lambda m: m.decode('utf-8')
+            )
+
+            producer = KafkaProducer(
+                bootstrap_servers='localhost:9092',
+                value_serializer=lambda m: m.encode('utf-8')
+            )
+
+            for msg in consumer:
+                path = msg.value
+                kafka_status.info(f"📥 수신된 파일 경로: {path}")
+                try:
+                    docs = load_markdown(path)
+                    split_docs = split_documents(docs)
+                    chain = get_summary_and_translate_chain(mode="detailed", lang="ko")
+                    result = chain.invoke(split_docs)
+                    formatted_result = FormatterFactory.get_formatter("markdown").format(result)
+
+                    if not isinstance(formatted_result, str):
+                        try:
+                            formatted_result = json.dumps(formatted_result, ensure_ascii=False, indent=2)
+                        except Exception:
+                            formatted_result = str(formatted_result)
+
+                    producer.send('md-file-responses', formatted_result)
+                    st.session_state["kafka_result"].append(f"요약 완료 및 전송: {formatted_result[:100]}...")
+                except Exception as e:
+                    st.session_state["kafka_result"].append(f"❌ 오류: {str(e)}")
+                kafka_result_box.markdown("\n\n".join(st.session_state["kafka_result"][-5:]))
+
+        if st.button("▶️ Kafka Consumer 시작"):
+            kafka_status.info("Kafka Consumer를 시작합니다...")
+            threading.Thread(target=run_kafka_consumer, daemon=True).start()
+
+    with tab5:
+        st.title("📤 Kafka 요청 전송 (Spring API 호출)")
+
+        uploaded_kafka_file = st.file_uploader("🔍 Finder에서 파일 선택 (선택사항)", type=["md"], key="kafka_request_file")
+        manual_kafka_path = st.text_input("또는 직접 경로 입력", value="", key="manual_kafka_path")
+
+        final_kafka_path = ""
+        if uploaded_kafka_file:
+            temp_kafka_path = os.path.join("temp", uploaded_kafka_file.name)
+            os.makedirs("temp", exist_ok=True)
+            with open(temp_kafka_path, "wb") as f:
+                f.write(uploaded_kafka_file.read())
+            final_kafka_path = temp_kafka_path
+            st.info(f"📁 선택된 파일 경로: {final_kafka_path}")
+        else:
+            final_kafka_path = manual_kafka_path
+
+        if st.button("🚀 Kafka 전송 요청 (Spring API 호출)"):
+            if final_kafka_path:
+                with st.spinner("Spring Kafka API 호출 중..."):
+                    try:
+                        response = requests.post(
+                            "http://localhost:8080/api/kafka/send-path",
+                            json={"path": final_kafka_path}
+                        )
+                        if response.status_code == 200:
+                            st.success(f"✅ Kafka 요청 성공: {response.text}")
+                        else:
+                            st.error(f"❌ 오류 발생: {response.status_code} - {response.text}")
+                    except Exception as e:
+                        st.error(f"❌ 예외 발생: {str(e)}")
+
+    with tab6:
+        st.title("🛰 Kafka Consumer 실행")
+        st.write("외부 kafka_consumer.py 파일을 실행합니다.")
+
+        if st.button("▶️ Kafka Consumer 실행 (백그라운드)"):
+            try:
+                subprocess.Popen(["python", "kafka_consumer.py"])
+                st.success("✅ kafka_consumer.py 실행 시작됨 (백그라운드)")
+            except Exception as e:
+                st.error(f"❌ 실행 실패: {str(e)}")
 
 
 if __name__ == "__main__":

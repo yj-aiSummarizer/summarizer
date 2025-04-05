@@ -60,7 +60,7 @@ pip install -r requirements.txt
 
 # 2. 환경변수 설정
 cp .env_sample .env
-# .env 파일에 GROQ_API_KEY=... 입력
+# .env 파일에 GROQ_API_KEY=... 입력l
 
 # 3. 실행
 streamlit run streamlit_app.py
